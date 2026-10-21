@@ -1,0 +1,164 @@
+# Airflow (LocalExecutor) running the PySpark jobs in local mode.
+#   make up   (= docker compose up -d --build)  -> http://localhost:8080 (airflow / airflow)
+# Analytics: Trino + Superset reading the Gold tables in ./data/lake
+#   make analytics  -> Superset http://localhost:8088 (admin / admin), Trino http://localhost:8081
+# Optional object storage: docker compose --profile minio up -d   (MinIO console :9001)
+
+x-airflow-common: &airflow-common
+  build:
+    context: .
+    dockerfile: docker/airflow/Dockerfile
+  image: ecommerce-airflow:latest
+  user: "${AIRFLOW_UID:-50000}:0"
+  environment: &airflow-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
+    AIRFLOW__CORE__PARALLELISM: "4"
+    AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "true"
+    PYTHONPATH: /opt/airflow/src
+    ECOM_PROJECT_HOME: /opt/airflow
+    ECOM_LANDING_ROOT: /opt/airflow/data/landing
+    ECOM_LAKE_ROOT: ${ECOM_LAKE_ROOT:-/opt/airflow/data/lake}
+    ECOM_S3_ENDPOINT: ${ECOM_S3_ENDPOINT:-}
+    AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
+    AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    SPARK_DRIVER_MEMORY: 2g
+  volumes:
+    - ./dags:/opt/airflow/dags
+    - ./src:/opt/airflow/src
+    - ./tests:/opt/airflow/tests
+    - ./scripts:/opt/airflow/scripts
+    - ./pyproject.toml:/opt/airflow/pyproject.toml
+    - ./data:/opt/airflow/data
+    - ./logs:/opt/airflow/logs
+  depends_on:
+    postgres:
+      condition: service_healthy
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - postgres-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 10s
+      retries: 5
+
+  airflow-init:
+    <<: *airflow-common
+    # Keep the image's default entrypoint: it registers the host user ID (AIRFLOW_UID)
+    # inside the container, which Airflow needs. A failed migration must fail this step.
+    command:
+      - bash
+      - -c
+      - |
+        set -e
+        airflow db migrate
+        airflow users create --username airflow --password airflow \
+          --firstname Data --lastname Engineer --role Admin --email admin@example.com \
+          || echo "user 'airflow' already exists"
+    restart: "no"
+
+  airflow-webserver:
+    <<: *airflow-common
+    command: webserver
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-scheduler:
+    <<: *airflow-common
+    command: scheduler
+    restart: unless-stopped
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+
+  # ------------------------------------------------------------ analytics (make analytics)
+  trino:
+    profiles: ["analytics"]
+    image: trinodb/trino:483
+    ports:
+      - "8081:8080"
+    mem_limit: 1536m          # JVM heap = 80% of this
+    volumes:
+      - ./trino/catalog:/etc/trino/catalog:ro
+      - ./trino/register_tables.sh:/etc/trino/scripts/register_tables.sh:ro
+      - ./data/lake:/lakehouse/lake:ro              # Delta tables written by Spark
+      - ./data/trino-metastore:/lakehouse/metastore # Trino's registry of those tables
+
+  superset-init:
+    profiles: ["analytics"]
+    build: docker/superset
+    image: ecommerce-superset:latest
+    environment: &superset-env
+      SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY:-local-dev-only-change-me}
+    volumes:
+      - superset-home:/app/superset_home
+    command:
+      - bash
+      - -c
+      - |
+        set -e
+        superset db upgrade
+        superset fab create-admin --username admin --password admin \
+          --firstname Admin --lastname User --email admin@example.com || echo "admin exists"
+        superset init
+    restart: "no"
+
+  superset:
+    profiles: ["analytics"]
+    image: ecommerce-superset:latest
+    environment:
+      <<: *superset-env
+      SERVER_WORKER_AMOUNT: "2"
+    ports:
+      - "8088:8088"
+    volumes:
+      - superset-home:/app/superset_home
+      - ./superset:/app/provision:ro
+    restart: unless-stopped
+    depends_on:
+      superset-init:
+        condition: service_completed_successfully
+      trino:
+        condition: service_started
+
+  # ------------------------------------------------------------ optional: MinIO (S3)
+  minio:
+    profiles: ["minio"]
+    image: minio/minio:RELEASE.2024-12-18T13-15-44Z
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+
+  minio-init:
+    profiles: ["minio"]
+    image: minio/mc:RELEASE.2024-11-21T17-21-54Z
+    depends_on: [minio]
+    entrypoint: >
+      /bin/sh -c "
+      until mc alias set local http://minio:9000 $${MINIO_ROOT_USER:-minioadmin} $${MINIO_ROOT_PASSWORD:-minioadmin}; do sleep 2; done;
+      mc mb --ignore-existing local/lakehouse;
+      "
+
+volumes:
+  postgres-db:
+  superset-home:
+  minio-data:

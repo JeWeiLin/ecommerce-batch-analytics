@@ -1,0 +1,22 @@
+[project]
+name = "ecommerce-batch-analytics"
+version = "0.1.0"
+description = "E-commerce batch analytics platform: PySpark + Delta Lake + Airflow"
+requires-python = ">=3.9"
+dependencies = ["pyspark==3.5.4", "delta-spark==3.2.1"]
+
+[project.optional-dependencies]
+dev = ["pytest==8.3.4"]
+
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src", "tests"]
+testpaths = ["tests"]
+markers = ["slow: end-to-end tests that run the full Spark pipeline"]
+addopts = "-ra"

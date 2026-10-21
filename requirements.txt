@@ -1,0 +1,7 @@
+# Python packages for the pipeline and tests.
+# Airflow is NOT listed here: it runs in Docker (apache/airflow:2.10.5 image), and the
+# image installs this same file on top. Versions match Airflow 2.10.5's official
+# constraints so both environments use identical PySpark / pytest versions.
+pyspark==3.5.4
+delta-spark==3.2.1
+pytest==8.3.4
