@@ -20,11 +20,11 @@
         ▼                                                ▼
  ┌──────────────┐   ┌───────────────────────┐   ┌──────────────────────────────┐
  │   Bronze     │──▶│        Silver         │──▶│             Gold             │
- │ 原始字串+血緣 │   │ 型別/標準化/驗證/去重  │   │ dim_customer (SCD2)          │
- │ replaceWhere │   │ MERGE / replaceWhere  │   │ dim_product  (SCD2 價格歷史) │
- └──────────────┘   └──────────┬────────────┘   │ fact_sales   (MERGE 增量)    │
+ │ 原始字串+血緣  │   │ 型別/標準化/驗證/去重    │   │ dim_customer (SCD2)          │
+ │ replaceWhere │   │ MERGE / replaceWhere  │   │ dim_product  (SCD2 價格歷史)   │
+ └──────────────┘   └──────────┬────────────┘   │ fact_sales   (MERGE 增量)     │
                                │                │ agg_daily_sales              │
-                     ┌─────────▼────────┐       │ agg_customer_orders (回購)   │
+                     ┌─────────▼────────┐       │ agg_customer_orders (回購)    │
                      │ Quarantine       │       └──────────────┬───────────────┘
                      │ 無效資料+原因     │                      │
                      └──────────────────┘          Trino SQL → Superset 儀表板
@@ -33,7 +33,7 @@
 
 </details>
 
-## 專案亮點
+## 專案
 
 | 功能 | 實作方式 | 驗證 |
 |---|---|---|
@@ -75,7 +75,7 @@
 ## 快速開始（Docker + Airflow）
 
 整個專案都在 Docker 裡執行：Airflow 負責排程，Spark job 在 Airflow 的容器內執行。
-本機只需要 **Docker Desktop**（建議分配至少 6 GB 記憶體），不需要安裝 Python 套件或 Java。
+本機只需要 **Docker Desktop**（建議分配至少 6 GB 記憶體）。
 
 ```bash
 make up                                       # 1. 建置映像並啟動 Airflow（第一次約 5–10 分鐘）
